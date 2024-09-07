@@ -1,15 +1,13 @@
-<p align="center">
-  <img src="assets/header.png" alt="Your Image" height="200" style="width: 100%; height: auto; margin: 0 auto;" />
-</p>
+# Hi 👋, I'm Bill Liang
 
-<h3>Stats</h3>
+## Stats
 <p align="left">
   <img src="https://github-readme-streak-stats.herokuapp.com/?user=deviant-liang&theme=tokyonight" alt="Your GitHub Streak" height="200" />
   &nbsp;&nbsp;&nbsp;
   <img src="https://github-readme-stats.vercel.app/api/top-langs/?username=deviant-liang&layout=compact&theme=tokyonight" alt="Your Top Languages" height="200" />
 </p>
 
-<h3>Tech Stack</h3>
+## Tech Stack
 <p align="left">
   <img src="https://img.shields.io/badge/C%2B%2B-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white" alt="C++" />
   <img src="https://img.shields.io/badge/CMake-064F8C?style=for-the-badge&logo=cmake&logoColor=white" alt="CMake" />
