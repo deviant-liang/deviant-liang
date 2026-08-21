@@ -9,3 +9,4 @@ cache/*
 
 assets/*
 !assets/.gitkeep
+!assets/profile.svg
