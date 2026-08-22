@@ -39,37 +39,35 @@ REQUEST_TIMEOUT = 30
 REQUEST_RETRIES = 3
 PAGE_SIZE = 100
 
-# Token is optional.
-# If you have one:
-#   PowerShell:
-#   $env:GITHUB_TOKEN="ghp_xxx"
-TOKEN = os.environ.get("GITHUB_TOKEN", "")
+TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
+USERNAME_ENV = os.getenv("GITHUB_USERNAME", "").strip()
 
 
 # ============================================================
-# Visual direction
+# Visual system
 # ============================================================
 
-BLACK = "#010302"
-BLACK_2 = "#030705"
-BLACK_3 = "#07100A"
+BLACK = "#010402"
+BLACK_2 = "#040806"
+BLACK_3 = "#07110B"
 
-GREEN = "#0A6F32"
-GREEN_MID = "#0B8F40"
-GREEN_BRIGHT = "#24C96B"
-GREEN_FAINT = "#123D24"
-GREEN_GHOST = "#0A2114"
+GREEN = "#0B7A38"
+GREEN_MID = "#10A84B"
+GREEN_BRIGHT = "#2BD879"
 
-WHITE = "#B9C9BE"
-WHITE_SOFT = "#718178"
+GREEN_FAINT = "#174C2D"
+GREEN_GHOST = "#0C2919"
 
-GRAY = "#405149"
-GRAY_DARK = "#1B2921"
-GRAY_DARKER = "#0B120E"
+# Brighter than the previous version.
+WHITE = "#D0D9D3"
+WHITE_SOFT = "#9AA89F"
+GRAY = "#6D7C73"
+GRAY_DARK = "#27362D"
+GRAY_DARKER = "#111A15"
 
 FONT = (
     "ui-monospace, SFMono-Regular, Menlo, Monaco, "
-    "Consolas, monospace"
+    "Consolas, Liberation Mono, monospace"
 )
 
 ASCII = " .,:;irsXA253hMHGS#9B&@"
@@ -98,9 +96,7 @@ def load_json(path: Path, default):
         return default
 
     try:
-        return json.loads(
-            path.read_text(encoding="utf-8")
-        )
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return default
 
@@ -131,107 +127,59 @@ def esc(value) -> str:
     )
 
 
+def shorten(value: str, length: int) -> str:
+    value = str(value or "")
+
+    if len(value) <= length:
+        return value
+
+    return value[: max(1, length - 3)] + "..."
+
+
 # ============================================================
-# Git repository / username
+# Username
 # ============================================================
 
-def get_git_remote() -> str:
+def get_git_remote_username() -> str | None:
     """
-    Read the GitHub remote directly from the local repository.
+    Fallback for local execution when GITHUB_TOKEN is not set.
 
-    Supports:
-        https://github.com/user/repo.git
-        git@github.com:user/repo.git
-        https://github.com/user/repo
-        git@github.com:user/repo
+    Examples:
+        https://github.com/deviant-liang/deviant-liang.git
+        git@github.com:deviant-liang/deviant-liang.git
     """
 
     try:
         result = subprocess.run(
             [
                 "git",
-                "remote",
-                "get-url",
-                "origin",
+                "config",
+                "--get",
+                "remote.origin.url",
             ],
             cwd=ROOT,
             capture_output=True,
             text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=True,
+            check=False,
         )
+    except OSError:
+        return None
 
-        remote = result.stdout.strip()
+    remote = result.stdout.strip()
 
-        if not remote:
-            raise RuntimeError(
-                "Git remote 'origin' is empty."
-            )
+    if not remote:
+        return None
 
-        return remote
-
-    except FileNotFoundError as error:
-        raise RuntimeError(
-            "Git executable was not found."
-        ) from error
-
-    except subprocess.CalledProcessError as error:
-        message = (
-            error.stderr.strip()
-            or "Git remote 'origin' was not found."
-        )
-
-        raise RuntimeError(message) from error
-
-
-def get_username_from_remote(remote: str) -> str:
-    """
-    Extract GitHub username/owner from the origin URL.
-
-    This does NOT use HEAD, git log, or repository commits.
-    Therefore it also works when the repository has no commits yet.
-    """
-
-    remote = remote.strip()
-
-    patterns = (
-        r"^https?://github\.com/([^/]+)/[^/]+/?(?:\.git)?$",
-        r"^git@github\.com:([^/]+)/[^/]+/?(?:\.git)?$",
-        r"^ssh://git@github\.com/([^/]+)/[^/]+/?(?:\.git)?$",
+    match = re.search(
+        r"github\.com[/:]([^/]+)/[^/]+(?:\.git)?$",
+        remote,
+        re.IGNORECASE,
     )
 
-    for pattern in patterns:
-        match = re.match(
-            pattern,
-            remote,
-            re.IGNORECASE,
-        )
+    if not match:
+        return None
 
-        if match:
-            username = match.group(1).strip()
-
-            if username:
-                return username
-
-    raise RuntimeError(
-        f"Unable to determine GitHub username "
-        f"from remote:\n{remote}"
-    )
-
-
-def get_username() -> str:
-    remote = get_git_remote()
-
-    log(f"Git remote: {remote}")
-
-    username = get_username_from_remote(
-        remote
-    )
-
-    log(f"GitHub username: @{username}")
-
-    return username
+    return match.group(1)
 
 
 # ============================================================
@@ -269,12 +217,8 @@ class GitHubAPI:
             url += "?" + urlencode(params)
 
         headers = {
-            "Accept": (
-                "application/vnd.github+json"
-            ),
-            "User-Agent": (
-                "deviant-liang-profile"
-            ),
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "deviant-liang-profile",
             "X-GitHub-Api-Version": API_VERSION,
         }
 
@@ -283,9 +227,7 @@ class GitHubAPI:
                 f"Bearer {self.token}"
             )
 
-        for attempt in range(
-            REQUEST_RETRIES
-        ):
+        for attempt in range(REQUEST_RETRIES):
             request = Request(
                 url,
                 headers=headers,
@@ -298,16 +240,13 @@ class GitHubAPI:
                     timeout=REQUEST_TIMEOUT,
                 ) as response:
 
-                    remaining = (
-                        response.headers.get(
-                            "X-RateLimit-Remaining"
-                        )
+                    remaining = response.headers.get(
+                        "X-RateLimit-Remaining"
                     )
 
                     if remaining:
                         log(
-                            f"API remaining: "
-                            f"{remaining}"
+                            f"API remaining: {remaining}"
                         )
 
                     body = response.read().decode(
@@ -324,19 +263,14 @@ class GitHubAPI:
 
                 if (
                     error.code in (403, 429)
-                    and attempt
-                    < REQUEST_RETRIES - 1
+                    and attempt < REQUEST_RETRIES - 1
                 ):
-                    retry_after = (
-                        error.headers.get(
-                            "Retry-After"
-                        )
+                    retry_after = error.headers.get(
+                        "Retry-After"
                     )
 
                     try:
-                        wait = int(
-                            retry_after
-                        )
+                        wait = int(retry_after)
                     except (
                         TypeError,
                         ValueError,
@@ -358,10 +292,7 @@ class GitHubAPI:
                 ) from error
 
             except URLError as error:
-                if (
-                    attempt
-                    < REQUEST_RETRIES - 1
-                ):
+                if attempt < REQUEST_RETRIES - 1:
                     wait = 2 ** attempt
 
                     log(
@@ -384,7 +315,82 @@ class GitHubAPI:
 
 
 # ============================================================
-# GitHub data
+# Resolve username
+# ============================================================
+
+def resolve_username(api: GitHubAPI) -> str:
+    """
+    Username is never hard-coded.
+
+    Priority:
+        1. Authenticated GitHub API /user
+        2. GITHUB_USERNAME environment variable
+        3. Git remote origin
+        4. Cached profile
+    """
+
+    if api.token:
+        try:
+            user = api.get("/user")
+
+            if isinstance(user, dict):
+                login = user.get("login")
+
+                if login:
+                    username = str(login)
+
+                    log(
+                        f"Detected GitHub user: @{username}"
+                    )
+
+                    return username
+
+        except GitHubAPIError as error:
+            log(
+                f"Unable to resolve authenticated user: "
+                f"{error.status}"
+            )
+
+    if USERNAME_ENV:
+        log(
+            f"Using GITHUB_USERNAME: @{USERNAME_ENV}"
+        )
+
+        return USERNAME_ENV
+
+    remote_username = get_git_remote_username()
+
+    if remote_username:
+        log(
+            f"Detected username from Git remote: "
+            f"@{remote_username}"
+        )
+
+        return remote_username
+
+    cached = load_json(
+        PROFILE_CACHE,
+        {},
+    )
+
+    if isinstance(cached, dict):
+        username = cached.get("login")
+
+        if username:
+            log(
+                f"Using cached username: @{username}"
+            )
+
+            return str(username)
+
+    fail(
+        "Unable to determine GitHub username.\n"
+        "Set GITHUB_TOKEN or GITHUB_USERNAME."
+    )
+
+
+# ============================================================
+# GitHub profile
 # ============================================================
 
 def get_profile(
@@ -400,10 +406,7 @@ def get_profile(
         f"/users/{username}"
     )
 
-    if not isinstance(
-        profile,
-        dict,
-    ):
+    if not isinstance(profile, dict):
         raise GitHubAPIError(
             None,
             "Invalid profile response.",
@@ -439,10 +442,7 @@ def get_repositories(
             },
         )
 
-        if not isinstance(
-            batch,
-            list,
-        ):
+        if not isinstance(batch, list):
             break
 
         if not batch:
@@ -451,10 +451,7 @@ def get_repositories(
         repositories.extend(
             repo
             for repo in batch
-            if isinstance(
-                repo,
-                dict,
-            )
+            if isinstance(repo, dict)
         )
 
         if len(batch) < PAGE_SIZE:
@@ -471,8 +468,7 @@ def get_repositories(
     ]
 
     log(
-        f"Repositories: "
-        f"{len(repositories)}"
+        f"Repositories: {len(repositories)}"
     )
 
     return repositories
@@ -517,9 +513,8 @@ def get_commit_count(
 
     except GitHubAPIError as error:
         log(
-            f"Commit count failed "
-            f"for {name}: "
-            f"{error.status}"
+            f"Commit count failed for "
+            f"{name}: {error.status}"
         )
 
         return 0
@@ -536,10 +531,7 @@ def get_commits(
         {},
     )
 
-    if not isinstance(
-        cache,
-        dict,
-    ):
+    if not isinstance(cache, dict):
         cache = {}
 
     total = 0
@@ -547,33 +539,21 @@ def get_commits(
 
     for repo in repositories:
         name = repo["name"]
-
-        pushed_at = repo.get(
-            "pushed_at"
-        )
+        pushed_at = repo.get("pushed_at")
 
         cached = cache.get(name)
 
         if (
-            isinstance(
-                cached,
-                dict,
-            )
-            and cached.get(
-                "pushed_at"
-            ) == pushed_at
+            isinstance(cached, dict)
+            and cached.get("pushed_at") == pushed_at
         ):
             count = int(
-                cached.get(
-                    "count",
-                    0,
-                )
+                cached.get("count", 0)
             )
 
         else:
             log(
-                f"Calculating commits: "
-                f"{name}"
+                f"Calculating commits: {name}"
             )
 
             count = get_commit_count(
@@ -624,17 +604,13 @@ def get_lines_added_for_repo(
 
     except GitHubAPIError as error:
         log(
-            f"LOC unavailable "
-            f"for {name}: "
-            f"{error.status}"
+            f"LOC unavailable for "
+            f"{name}: {error.status}"
         )
 
         return 0
 
-    if not isinstance(
-        data,
-        list,
-    ):
+    if not isinstance(data, list):
         return 0
 
     for contributor in data:
@@ -645,17 +621,12 @@ def get_lines_added_for_repo(
             continue
 
         author = (
-            contributor.get(
-                "author"
-            )
+            contributor.get("author")
             or {}
         )
 
         login = str(
-            author.get(
-                "login",
-                "",
-            )
+            author.get("login", "")
         ).lower()
 
         if login != username.lower():
@@ -663,10 +634,7 @@ def get_lines_added_for_repo(
 
         return sum(
             int(
-                week.get(
-                    "a",
-                    0,
-                )
+                week.get("a", 0)
             )
             for week in contributor.get(
                 "weeks",
@@ -692,10 +660,7 @@ def get_lines_added(
         {},
     )
 
-    if not isinstance(
-        cache,
-        dict,
-    ):
+    if not isinstance(cache, dict):
         cache = {}
 
     total = 0
@@ -703,33 +668,21 @@ def get_lines_added(
 
     for repo in repositories:
         name = repo["name"]
-
-        pushed_at = repo.get(
-            "pushed_at"
-        )
+        pushed_at = repo.get("pushed_at")
 
         cached = cache.get(name)
 
         if (
-            isinstance(
-                cached,
-                dict,
-            )
-            and cached.get(
-                "pushed_at"
-            ) == pushed_at
+            isinstance(cached, dict)
+            and cached.get("pushed_at") == pushed_at
         ):
             value = int(
-                cached.get(
-                    "value",
-                    0,
-                )
+                cached.get("value", 0)
             )
 
         else:
             log(
-                f"Calculating LOC: "
-                f"{name}"
+                f"Calculating LOC: {name}"
             )
 
             value = get_lines_added_for_repo(
@@ -764,22 +717,16 @@ def get_languages(
     repositories: list[dict],
 ) -> dict[str, int]:
 
-    languages = {}
+    languages: dict[str, int] = {}
 
     for repo in repositories:
-        language = repo.get(
-            "language"
-        )
+        language = repo.get("language")
 
         if not language:
             continue
 
         languages[language] = (
-            languages.get(
-                language,
-                0,
-            )
-            + 1
+            languages.get(language, 0) + 1
         )
 
     return dict(
@@ -871,16 +818,13 @@ def get_latest_repository(
     return max(
         repositories,
         key=lambda repo: (
-            repo.get(
-                "pushed_at"
-            )
-            or ""
+            repo.get("pushed_at") or ""
         ),
     )
 
 
 # ============================================================
-# Date helpers
+# Dates
 # ============================================================
 
 def parse_date(
@@ -919,9 +863,7 @@ def account_age(
     created_at: str | None,
 ) -> str:
 
-    created = parse_date(
-        created_at
-    )
+    created = parse_date(created_at)
 
     if created is None:
         return "UNKNOWN"
@@ -935,15 +877,10 @@ def account_age(
     ).days
 
     years = days // 365
-    months = (
-        days % 365
-    ) // 30
+    months = (days % 365) // 30
 
     if years:
-        return (
-            f"{years}Y "
-            f"{months}M"
-        )
+        return f"{years}Y {months}M"
 
     return f"{months}M"
 
@@ -964,10 +901,8 @@ def collect_statistics(
         repositories
     )
 
-    top_repositories = (
-        get_top_repositories(
-            repositories
-        )
+    top_repositories = get_top_repositories(
+        repositories
     )
 
     return {
@@ -1032,15 +967,11 @@ def collect_statistics(
         ),
 
         "account_created": format_date(
-            profile.get(
-                "created_at"
-            )
+            profile.get("created_at")
         ),
 
         "account_age": account_age(
-            profile.get(
-                "created_at"
-            )
+            profile.get("created_at")
         ),
 
         "latest_repo": (
@@ -1051,9 +982,7 @@ def collect_statistics(
 
         "latest_repo_date": (
             format_date(
-                latest.get(
-                    "pushed_at"
-                )
+                latest.get("pushed_at")
             )
             if latest
             else "UNKNOWN"
@@ -1081,9 +1010,7 @@ def collect_statistics(
                 ),
 
                 "language": (
-                    repo.get(
-                        "language"
-                    )
+                    repo.get("language")
                     or "N/A"
                 ),
             }
@@ -1093,7 +1020,7 @@ def collect_statistics(
 
 
 # ============================================================
-# Avatar processing
+# Avatar
 # ============================================================
 
 def download_avatar(
@@ -1121,6 +1048,7 @@ def download_avatar(
             request,
             timeout=REQUEST_TIMEOUT,
         ) as response:
+
             data = response.read()
 
         image = Image.open(
@@ -1143,7 +1071,8 @@ def download_avatar(
         return load_cached_avatar()
 
 
-def load_cached_avatar():
+def load_cached_avatar() -> Image.Image | None:
+
     if not AVATAR_CACHE.exists():
         return None
 
@@ -1157,12 +1086,12 @@ def load_cached_avatar():
 
 
 # ============================================================
-# Large cinematic ASCII portrait
+# ASCII portrait
 # ============================================================
 
 def image_to_ascii(
     image: Image.Image | None,
-    width: int = 72,
+    width: int = 92,
 ) -> list[str]:
 
     if image is None:
@@ -1173,14 +1102,11 @@ def image_to_ascii(
     if image.width <= 0 or image.height <= 0:
         return ["NO SIGNAL"]
 
-    # --------------------------------------------------------
-    # ASCII dimensions
-    # --------------------------------------------------------
-
     source_ratio = (
         image.width / image.height
     )
 
+    # Wider portrait.
     character_aspect = 0.60
 
     height = max(
@@ -1200,51 +1126,33 @@ def image_to_ascii(
         Image.Resampling.LANCZOS,
     )
 
-    # --------------------------------------------------------
-    # Grayscale
-    # --------------------------------------------------------
-
     image = ImageOps.grayscale(
         image
     )
 
-    # --------------------------------------------------------
-    # Contrast
-    # --------------------------------------------------------
-
     image = ImageOps.autocontrast(
         image,
-        cutoff=0.5,
+        cutoff=0.35,
     )
 
     image = ImageEnhance.Contrast(
         image
-    ).enhance(1.28)
+    ).enhance(1.34)
 
     image = ImageEnhance.Brightness(
         image
-    ).enhance(1.03)
-
-    # --------------------------------------------------------
-    # Controlled sharpening
-    # --------------------------------------------------------
+    ).enhance(1.06)
 
     image = image.filter(
         ImageFilter.UnsharpMask(
             radius=1.0,
-            percent=110,
-            threshold=4,
+            percent=115,
+            threshold=3,
         )
     )
 
-    # --------------------------------------------------------
-    # Character ramp
-    # --------------------------------------------------------
-
     characters = ASCII
-    character_count = len(
-        characters
-    )
+    character_count = len(characters)
 
     pixels = list(
         image.getdata()
@@ -1253,7 +1161,7 @@ def image_to_ascii(
     result: list[str] = []
 
     for y in range(height):
-        line = []
+        line_chars = []
 
         for x in range(width):
             value = pixels[
@@ -1263,9 +1171,7 @@ def image_to_ascii(
             index = round(
                 value
                 / 255
-                * (
-                    character_count - 1
-                )
+                * (character_count - 1)
             )
 
             index = max(
@@ -1276,17 +1182,13 @@ def image_to_ascii(
                 ),
             )
 
-            line.append(
+            line_chars.append(
                 characters[index]
             )
 
         result.append(
-            "".join(line)
+            "".join(line_chars)
         )
-
-    # --------------------------------------------------------
-    # Remove empty rows only
-    # --------------------------------------------------------
 
     while (
         result
@@ -1329,16 +1231,16 @@ def text(
 
     return f"""
 <text
-  x="{x}"
-  y="{y}"
-  fill="{fill}"
-  opacity="{opacity}"
-  font-size="{size}px"
-  font-weight="{weight}"
-  text-anchor="{anchor}"
-  letter-spacing="{letter_spacing}px"
-  font-family="{FONT}"
-  {filter_attr}
+    x="{x}"
+    y="{y}"
+    fill="{fill}"
+    opacity="{opacity}"
+    font-size="{size}px"
+    font-weight="{weight}"
+    text-anchor="{anchor}"
+    letter-spacing="{letter_spacing}px"
+    font-family="{FONT}"
+    {filter_attr}
 >{esc(value)}</text>
 """
 
@@ -1390,7 +1292,7 @@ def rect(
 
 
 # ============================================================
-# Cinematic background
+# Background
 # ============================================================
 
 def create_background(
@@ -1401,127 +1303,97 @@ def create_background(
     svg = f"""
 <defs>
 
-  <radialGradient
-    id="heroGlow"
-    cx="30%"
-    cy="42%"
-    r="58%"
-  >
-    <stop
-      offset="0%"
-      stop-color="{GREEN}"
-      stop-opacity="0.17"
-    />
+    <radialGradient
+        id="heroGlow"
+        cx="28%"
+        cy="42%"
+        r="65%"
+    >
+        <stop
+            offset="0%"
+            stop-color="{GREEN}"
+            stop-opacity="0.20"
+        />
 
-    <stop
-      offset="45%"
-      stop-color="{GREEN}"
-      stop-opacity="0.05"
-    />
+        <stop
+            offset="42%"
+            stop-color="{GREEN}"
+            stop-opacity="0.07"
+        />
 
-    <stop
-      offset="100%"
-      stop-color="{BLACK}"
-      stop-opacity="0"
-    />
-  </radialGradient>
+        <stop
+            offset="100%"
+            stop-color="{BLACK}"
+            stop-opacity="0"
+        />
+    </radialGradient>
 
-  <linearGradient
-    id="fadeTop"
-    x1="0"
-    y1="0"
-    x2="0"
-    y2="1"
-  >
-    <stop
-      offset="0%"
-      stop-color="{GREEN}"
-      stop-opacity="0.08"
-    />
+    <linearGradient
+        id="fadeTop"
+        x1="0"
+        y1="0"
+        x2="0"
+        y2="1"
+    >
+        <stop
+            offset="0%"
+            stop-color="{GREEN}"
+            stop-opacity="0.10"
+        />
 
-    <stop
-      offset="100%"
-      stop-color="{BLACK}"
-      stop-opacity="0"
-    />
-  </linearGradient>
+        <stop
+            offset="100%"
+            stop-color="{BLACK}"
+            stop-opacity="0"
+        />
+    </linearGradient>
 
-  <linearGradient
-    id="fadeRight"
-    x1="0"
-    y1="0"
-    x2="1"
-    y2="0"
-  >
-    <stop
-      offset="0%"
-      stop-color="{BLACK}"
-      stop-opacity="0"
-    />
+    <filter
+        id="softGlow"
+        x="-50%"
+        y="-50%"
+        width="200%"
+        height="200%"
+    >
+        <feGaussianBlur
+            stdDeviation="2"
+            result="blur"
+        />
 
-    <stop
-      offset="100%"
-      stop-color="{GREEN}"
-      stop-opacity="0.04"
-    />
-  </linearGradient>
-
-  <filter
-    id="softGlow"
-    x="-50%"
-    y="-50%"
-    width="200%"
-    height="200%"
-  >
-    <feGaussianBlur
-      stdDeviation="2"
-      result="blur"
-    />
-
-    <feMerge>
-      <feMergeNode in="blur" />
-      <feMergeNode in="SourceGraphic" />
-    </feMerge>
-  </filter>
+        <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+        </feMerge>
+    </filter>
 
 </defs>
 
 <rect
-  width="100%"
-  height="100%"
-  fill="{BLACK}"
+    width="100%"
+    height="100%"
+    fill="{BLACK}"
 />
 
 <rect
-  width="100%"
-  height="100%"
-  fill="url(#heroGlow)"
+    width="100%"
+    height="100%"
+    fill="url(#heroGlow)"
 />
 
 <rect
-  width="100%"
-  height="100%"
-  fill="url(#fadeTop)"
-/>
-
-<rect
-  width="100%"
-  height="100%"
-  fill="url(#fadeRight)"
+    width="100%"
+    height="100%"
+    fill="url(#fadeTop)"
 />
 
 <g
-  stroke="{GREEN}"
-  stroke-width="1"
-  opacity="0.025"
+    stroke="{GREEN}"
+    stroke-width="1"
+    opacity="0.028"
 >
 """
 
-    for y in range(
-        0,
-        height,
-        7,
-    ):
+    for y in range(0, height, 8):
         svg += (
             f'<line '
             f'x1="0" '
@@ -1530,15 +1402,17 @@ def create_background(
             f'y2="{y}" />'
         )
 
-    svg += "</g>"
+    svg += """
+</g>
+"""
 
     svg += line(
-        70,
+        55,
         0,
-        70,
+        55,
         height,
         stroke=GREEN_GHOST,
-        opacity=0.25,
+        opacity=0.28,
     )
 
     return svg
@@ -1556,9 +1430,9 @@ def create_header(
 
     svg += text(
         username.upper(),
-        70,
         55,
-        size=11,
+        48,
+        size=13,
         fill=GREEN_BRIGHT,
         weight="700",
         letter_spacing=3,
@@ -1566,37 +1440,37 @@ def create_header(
 
     svg += text(
         "GITHUB / PROFILE",
-        1040,
-        55,
-        size=9,
+        1145,
+        48,
+        size=10,
         fill=GRAY,
         anchor="end",
         letter_spacing=2,
     )
 
     svg += line(
-        70,
-        75,
-        1040,
-        75,
+        55,
+        67,
+        1145,
+        67,
         stroke=GREEN_GHOST,
-        opacity=0.7,
+        opacity=0.85,
     )
 
     svg += text(
         "01",
-        70,
-        105,
-        size=8,
+        55,
+        95,
+        size=10,
         fill=GREEN,
         weight="700",
     )
 
     svg += text(
         "IDENTITY",
-        102,
-        105,
-        size=8,
+        92,
+        95,
+        size=10,
         fill=GRAY,
         letter_spacing=2,
     )
@@ -1614,10 +1488,11 @@ def create_portrait(
 
     svg = ""
 
-    x = 70
-    y = 135
-    width = 515
-    height = 405
+    x = 55
+    y = 120
+
+    width = 600
+    height = 500
 
     svg += rect(
         x,
@@ -1626,22 +1501,22 @@ def create_portrait(
         height,
         fill=BLACK_2,
         stroke=GREEN_GHOST,
-        opacity=0.8,
+        opacity=0.9,
     )
 
     svg += text(
         "VISUAL IDENTITY",
-        x + 22,
-        y + 25,
-        size=8,
+        x + 24,
+        y + 28,
+        size=10,
         fill=GRAY,
         letter_spacing=2,
     )
 
-    padding_left = 24
-    padding_right = 24
-    padding_top = 48
-    padding_bottom = 18
+    padding_left = 16
+    padding_right = 16
+    padding_top = 45
+    padding_bottom = 12
 
     portrait_x = (
         x + padding_left
@@ -1663,14 +1538,14 @@ def create_portrait(
         - padding_bottom
     )
 
-    ascii_width = 78
+    ascii_width = 92
 
     lines = image_to_ascii(
         avatar,
         width=ascii_width,
     )
 
-    char_size = 8
+    char_size = 8.8
 
     character_width = (
         char_size * 0.625
@@ -1705,13 +1580,11 @@ def create_portrait(
     )
 
     rendered_width = (
-        ascii_width_px
-        * scale
+        ascii_width_px * scale
     )
 
     rendered_height = (
-        ascii_height_px
-        * scale
+        ascii_height_px * scale
     )
 
     center_x = (
@@ -1724,52 +1597,40 @@ def create_portrait(
         + portrait_height / 2
     )
 
-    # IMPORTANT:
-    # The ASCII text itself is left anchored.
-    # This prevents the previous horizontal
-    # centering error caused by text-anchor="middle".
-    start_x = (
-        center_x
-        - rendered_width / 2
-    )
-
+    start_x = center_x
     start_y = (
         center_y
         - rendered_height / 2
+        + char_size * scale
     )
 
     svg += f"""
 <g
-  transform="
-    translate({start_x},{start_y})
-    scale({scale})
-  "
+    transform="
+        translate({start_x},{start_y})
+        scale({scale})
+    "
 >
+
 <text
-  x="0"
-  y="0"
-  fill="{GREEN}"
-  opacity="0.92"
-  font-size="{char_size}px"
-  font-weight="400"
-  text-anchor="start"
-  letter-spacing="0px"
-  font-family="{FONT}"
-  xml:space="preserve"
+    x="0"
+    y="0"
+    fill="{GREEN_MID}"
+    opacity="0.94"
+    font-size="{char_size}px"
+    font-weight="400"
+    text-anchor="middle"
+    letter-spacing="0px"
+    font-family="{FONT}"
+    xml:space="preserve"
 >
 """
 
-    for index, value in enumerate(lines):
-        dy = (
-            char_size
-            if index == 0
-            else char_size
-        )
-
+    for value in lines:
         svg += (
             f'<tspan '
             f'x="0" '
-            f'dy="{dy}px">'
+            f'dy="{char_size}px">'
             f'{esc(value)}'
             f'</tspan>'
         )
@@ -1779,47 +1640,50 @@ def create_portrait(
 </g>
 """
 
+    # Frame corners.
+    corner = 38
+
     svg += line(
         x,
         y,
-        x + 32,
+        x + corner,
         y,
         stroke=GREEN_BRIGHT,
-        opacity=0.9,
+        opacity=0.95,
     )
 
     svg += line(
         x,
         y,
         x,
-        y + 32,
+        y + corner,
         stroke=GREEN_BRIGHT,
-        opacity=0.9,
+        opacity=0.95,
     )
 
     svg += line(
-        x + width - 32,
+        x + width - corner,
         y + height,
         x + width,
         y + height,
         stroke=GREEN_BRIGHT,
-        opacity=0.9,
+        opacity=0.95,
     )
 
     svg += line(
         x + width,
-        y + height - 32,
+        y + height - corner,
         x + width,
         y + height,
         stroke=GREEN_BRIGHT,
-        opacity=0.9,
+        opacity=0.95,
     )
 
     return svg
 
 
 # ============================================================
-# Identity
+# Identity panel
 # ============================================================
 
 def create_identity(
@@ -1828,13 +1692,13 @@ def create_identity(
 
     svg = ""
 
-    x = 635
+    x = 700
 
     svg += text(
         "THE OPERATOR",
         x,
-        145,
-        size=9,
+        132,
+        size=10,
         fill=GREEN,
         weight="700",
         letter_spacing=3,
@@ -1843,8 +1707,8 @@ def create_identity(
     svg += text(
         stats["username"],
         x,
-        188,
-        size=37,
+        178,
+        size=43,
         fill=WHITE,
         weight="700",
         letter_spacing=1,
@@ -1853,116 +1717,102 @@ def create_identity(
     svg += text(
         "software engineer / systems / C++",
         x,
-        216,
-        size=10,
-        fill=GRAY,
+        208,
+        size=12,
+        fill=WHITE_SOFT,
         letter_spacing=1,
     )
 
     svg += line(
         x,
-        238,
-        1040,
-        238,
+        230,
+        1145,
+        230,
         stroke=GREEN_GHOST,
-        opacity=0.8,
+        opacity=0.9,
     )
 
-    svg += text(
-        "STATUS",
-        x,
-        270,
-        size=8,
-        fill=GRAY,
-        letter_spacing=2,
-    )
+    # Compact two-column information.
+    columns = [
+        (
+            "STATUS",
+            "ONLINE",
+            x,
+            260,
+            GREEN_BRIGHT,
+        ),
+        (
+            "LOCATION",
+            stats["location"],
+            x + 205,
+            260,
+            WHITE,
+        ),
+        (
+            "SINCE",
+            stats["account_created"],
+            x,
+            330,
+            WHITE,
+        ),
+        (
+            "AGE",
+            stats["account_age"],
+            x + 205,
+            330,
+            WHITE,
+        ),
+    ]
 
-    svg += text(
-        "ONLINE",
-        x,
-        295,
-        size=13,
-        fill=GREEN_BRIGHT,
-        weight="700",
-        letter_spacing=2,
-        filter_id="softGlow",
-    )
-
-    svg += text(
-        "LOCATION",
-        x + 150,
-        270,
-        size=8,
-        fill=GRAY,
-        letter_spacing=2,
-    )
-
-    svg += text(
-        stats["location"],
-        x + 150,
-        295,
-        size=11,
-        fill=WHITE,
-    )
-
-    svg += text(
-        "SINCE",
-        x,
-        330,
-        size=8,
-        fill=GRAY,
-        letter_spacing=2,
-    )
-
-    svg += text(
-        stats["account_created"],
-        x,
-        354,
-        size=11,
-        fill=WHITE,
-    )
-
-    svg += text(
-        "AGE",
-        x + 150,
-        330,
-        size=8,
-        fill=GRAY,
-        letter_spacing=2,
-    )
-
-    svg += text(
-        stats["account_age"],
-        x + 150,
-        354,
-        size=11,
-        fill=WHITE,
-    )
-
-    bio = stats["bio"]
-
-    if bio:
-        bio = bio.replace(
-            "\n",
-            " ",
+    for label, value, px, py, color in columns:
+        svg += text(
+            label,
+            px,
+            py,
+            size=9,
+            fill=GRAY,
+            letter_spacing=2,
         )
 
-        if len(bio) > 60:
-            bio = bio[:57] + "..."
+        svg += text(
+            shorten(value, 22),
+            px,
+            py + 28,
+            size=15,
+            fill=color,
+            weight=(
+                "700"
+                if label == "STATUS"
+                else "500"
+            ),
+            letter_spacing=0.5,
+            filter_id=(
+                "softGlow"
+                if label == "STATUS"
+                else None
+            ),
+        )
+
+    bio = str(
+        stats.get("bio") or ""
+    ).replace("\n", " ")
+
+    if bio:
+        bio = shorten(bio, 55)
 
         svg += text(
             bio,
             x,
-            395,
-            size=10,
+            410,
+            size=12,
             fill=WHITE_SOFT,
         )
 
     svg += text(
-        f"github.com/{stats['username']}",
+        "github.com/deviant-liang",
         x,
-        430,
-        size=9,
+        452,
+        size=11,
         fill=GREEN_MID,
         letter_spacing=1,
     )
@@ -1970,10 +1820,10 @@ def create_identity(
     svg += text(
         "ACCESS LEVEL / PUBLIC",
         x,
-        465,
-        size=8,
+        488,
+        size=9,
         fill=GRAY,
-        letter_spacing=1,
+        letter_spacing=1.5,
     )
 
     return svg
@@ -1989,67 +1839,66 @@ def create_repository_signature(
 
     svg = ""
 
-    x = 635
+    x = 700
+    y = 525
 
     svg += text(
         "REPOSITORY SIGNAL",
         x,
-        515,
-        size=8,
+        y,
+        size=9,
         fill=GRAY,
         letter_spacing=2,
     )
 
-    y = 540
+    y += 29
 
-    for repo in stats[
-        "top_repositories"
-    ]:
-        name = repo["name"]
-
-        if len(name) > 18:
-            name = name[:15] + "..."
+    for repo in stats["top_repositories"]:
+        name = shorten(
+            repo["name"],
+            20,
+        )
 
         svg += text(
             name,
             x,
             y,
-            size=9,
+            size=11,
             fill=WHITE_SOFT,
         )
 
         svg += text(
             f"★ {repo['stars']}",
-            x + 175,
+            x + 205,
             y,
-            size=8,
+            size=9,
             fill=GREEN,
         )
 
         svg += text(
             f"⑂ {repo['forks']}",
-            x + 225,
+            x + 270,
             y,
-            size=8,
+            size=9,
             fill=GREEN_MID,
         )
 
         svg += text(
             repo["language"],
-            x + 405,
+            1145,
             y,
-            size=8,
+            size=9,
             fill=GRAY,
             anchor="end",
         )
 
-        y += 19
+        y += 24
 
     return svg
 
 
 # ============================================================
-# Statistics strip
+# Statistics
 # ============================================================
 
 def create_statistics(
@@ -2058,22 +1907,22 @@ def create_statistics(
 
     svg = ""
 
-    y = 585
+    top = 650
 
     svg += text(
         "02",
-        70,
-        y,
-        size=8,
+        55,
+        top,
+        size=10,
         fill=GREEN,
         weight="700",
     )
 
     svg += text(
         "SYSTEM METRICS",
-        102,
-        y,
-        size=8,
+        92,
+        top,
+        size=10,
         fill=GRAY,
         letter_spacing=2,
     )
@@ -2101,36 +1950,36 @@ def create_statistics(
         ),
     ]
 
-    x = 70
+    x = 55
 
     for label, value in metrics:
         svg += text(
             label,
             x,
-            625,
-            size=7,
+            684,
+            size=8,
             fill=GRAY,
-            letter_spacing=1,
+            letter_spacing=1.2,
         )
 
         svg += text(
             f"{value:,}",
             x,
-            655,
-            size=21,
+            719,
+            size=25,
             fill=WHITE,
             weight="700",
         )
 
-        x += 190
+        x += 218
 
     svg += line(
-        70,
-        675,
-        1040,
-        675,
+        55,
+        742,
+        1145,
+        742,
         stroke=GRAY_DARK,
-        opacity=0.8,
+        opacity=0.85,
     )
 
     return svg
@@ -2148,18 +1997,18 @@ def create_languages(
 
     svg += text(
         "03",
-        70,
-        715,
-        size=8,
+        55,
+        780,
+        size=10,
         fill=GREEN,
         weight="700",
     )
 
     svg += text(
         "LANGUAGE SIGNATURE",
-        102,
-        715,
-        size=8,
+        92,
+        780,
+        size=10,
         fill=GRAY,
         letter_spacing=2,
     )
@@ -2173,11 +2022,10 @@ def create_languages(
 
     total = sum(
         count
-        for _, count
-        in languages
+        for _, count in languages
     )
 
-    x = 70
+    x = 55
 
     for language, count in languages:
         ratio = (
@@ -2186,48 +2034,51 @@ def create_languages(
             else 0
         )
 
-        bar_width = max(
-            8,
+        bar_width = 170
+
+        active_width = max(
+            10,
             int(
-                ratio * 165
+                ratio
+                * bar_width
             ),
         )
 
         svg += rect(
             x,
-            740,
-            165,
-            4,
+            805,
+            bar_width,
+            5,
             fill=GRAY_DARK,
         )
 
         svg += rect(
             x,
-            740,
-            bar_width,
-            4,
+            805,
+            active_width,
+            5,
             fill=GREEN,
         )
 
         svg += text(
             language.upper(),
             x,
-            765,
-            size=8,
+            830,
+            size=9,
             fill=WHITE_SOFT,
             letter_spacing=1,
         )
 
         svg += text(
-            f"{count}",
-            x + 165,
-            765,
-            size=8,
+            str(count),
+            x + bar_width,
+            830,
+            size=9,
             fill=GREEN_MID,
             anchor="end",
         )
 
-        x += 190
+        x += 215
 
     return svg
 
@@ -2243,44 +2094,47 @@ def create_footer(
     svg = ""
 
     svg += line(
-        70,
-        790,
-        1040,
-        790,
+        55,
+        855,
+        1145,
+        855,
         stroke=GREEN_GHOST,
-        opacity=0.7,
+        opacity=0.8,
     )
 
     svg += text(
         "LATEST SIGNAL",
-        70,
-        815,
-        size=7,
+        55,
+        882,
+        size=8,
         fill=GRAY,
         letter_spacing=2,
     )
 
     svg += text(
-        stats["latest_repo"],
-        165,
-        815,
-        size=8,
+        shorten(
+            stats["latest_repo"],
+            32,
+        ),
+        175,
+        882,
+        size=10,
         fill=WHITE_SOFT,
     )
 
     svg += text(
         stats["latest_repo_date"],
-        400,
-        815,
-        size=8,
+        470,
+        882,
+        size=9,
         fill=GRAY,
     )
 
     svg += text(
         "GITHUB API / LIVE DATA",
-        1040,
-        815,
-        size=7,
+        1145,
+        882,
+        size=8,
         fill=GRAY,
         anchor="end",
         letter_spacing=1,
@@ -2298,15 +2152,15 @@ def create_svg(
     avatar: Image.Image | None,
 ) -> str:
 
-    width = 1110
-    height = 850
+    width = 1200
+    height = 910
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg
-  xmlns="http://www.w3.org/2000/svg"
-  width="{width}"
-  height="{height}"
-  viewBox="0 0 {width} {height}"
+    xmlns="http://www.w3.org/2000/svg"
+    width="{width}"
+    height="{height}"
+    viewBox="0 0 {width} {height}"
 >
 
 {create_background(
@@ -2315,7 +2169,7 @@ def create_svg(
 )}
 
 {create_header(
-    stats["username"]
+    stats["username"],
 )}
 
 {create_portrait(
@@ -2355,38 +2209,14 @@ def main() -> None:
     ensure_directories()
 
     log(
-        "Initializing cinematic "
-        "GitHub profile..."
+        "Initializing cinematic GitHub profile..."
     )
 
-    # --------------------------------------------------------
-    # IMPORTANT
-    #
-    # Username is NOT hard-coded.
-    #
-    # It is read from:
-    #
-    #     git remote get-url origin
-    #
-    # No HEAD / git log / commit history is required here.
-    # --------------------------------------------------------
+    api = GitHubAPI(TOKEN)
 
     try:
-        username = get_username()
+        username = resolve_username(api)
 
-    except RuntimeError as error:
-        fail(
-            "Unable to determine GitHub username:\n"
-            f"{error}\n\n"
-            "Make sure this repository has an "
-            "'origin' GitHub remote."
-        )
-
-    api = GitHubAPI(
-        TOKEN
-    )
-
-    try:
         profile = get_profile(
             api,
             username,
@@ -2441,55 +2271,38 @@ def main() -> None:
         )
 
         print()
-
         print(
-            "╭──────────────────────────────────────╮"
+            "╭──────────────────────────────────────────────╮"
         )
-
         print(
-            "│       CINEMATIC PROFILE READY        │"
+            "│          CINEMATIC PROFILE READY            │"
         )
-
         print(
-            "╰──────────────────────────────────────╯"
+            "╰──────────────────────────────────────────────╯"
         )
-
+        print()
         print(
             f"  @{username}"
         )
-
         print(
-            f"  repositories : "
-            f"{stats['repositories']:,}"
+            f"  repositories : {stats['repositories']:,}"
         )
-
         print(
-            f"  followers    : "
-            f"{stats['followers']:,}"
+            f"  followers    : {stats['followers']:,}"
         )
-
         print(
-            f"  stars        : "
-            f"{stats['stars']:,}"
+            f"  stars        : {stats['stars']:,}"
         )
-
         print(
-            f"  commits      : "
-            f"{stats['commits']:,}"
+            f"  commits      : {stats['commits']:,}"
         )
-
         print(
-            f"  lines added  : "
-            f"{stats['lines_added']:,}"
+            f"  lines added  : {stats['lines_added']:,}"
         )
-
         print()
-
         print(
-            "  output       : "
-            "assets/profile.svg"
+            "  output       : assets/profile.svg"
         )
-
         print()
 
     except GitHubAPIError as error:
